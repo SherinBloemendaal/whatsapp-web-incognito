@@ -121,11 +121,11 @@ var UIAnchors = (function ()
         var statusPill = clone.querySelector('span[role="status"]');
         if (statusPill && statusPill.parentElement) statusPill.parentElement.remove();
 
-        // Stop click events from bubbling into WhatsApp's React-delegated navbar handlers.
-        // We cloned the DOM but not React's synthetic-event bindings, so any bubbled clicks
-        // would either no-op or (worst case) trigger the original tab's navigation logic.
-        clone.addEventListener("click", function (e) { e.stopPropagation(); }, true);
-        clone.addEventListener("mousedown", function (e) { e.stopPropagation(); }, true);
+        // Note: we deliberately do NOT stopPropagation on click here. React's synthetic-event
+        // delegation only dispatches to elements with its internal `__reactProps$xxx` property
+        // expandos, and `cloneNode(true)` does not copy expandos — so React is blind to this
+        // node and will not run the original tab's navigation handler. Adding a capture-phase
+        // stopPropagation would also kill the Drop library's bubble-phase click listener.
 
         // Swap the SVG content
         try
