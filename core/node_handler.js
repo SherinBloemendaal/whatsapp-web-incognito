@@ -50,15 +50,40 @@ NodeHandler.isSentNodeAllowed = function (node)
                 var jid = data.jid ? data.jid : data.to;
                 jid = normalizeJID(jid.toString());
 
-                var isReadReceiptAllowed = exceptionsList.includes(jid);
-                if (isReadReceiptAllowed)
+                // Match either (a) full JID string equality, or (b) user/phone-number prefix
+                // equality. The latter catches the case where the user clicked "Mark as read"
+                // on a chat whose `accountLid` was pushed onto exceptionsList as `<n>@lid`,
+                // but WhatsApp emitted the receipt node addressed to the legacy
+                // `<n>@s.whatsapp.net` form (which normalizeJID rewrites to `<n>@c.us`) — or
+                // vice versa. The user portion (`<n>` before `@`, before `:`) is stable.
+                var jidUser = jid.split("@")[0].split(":")[0];
+                var matchedException = null;
+                if (exceptionsList.includes(jid)) matchedException = jid;
+                else
+                {
+                    for (var i = 0; i < exceptionsList.length; i++)
+                    {
+                        var ex = exceptionsList[i];
+                        var exUser = ex.split("@")[0].split(":")[0];
+                        if (exUser && exUser === jidUser)
+                        {
+                            matchedException = ex;
+                            break;
+                        }
+                    }
+                }
+
+                if (matchedException)
                 {
                     // this is the user trying to send out a read receipt.
-                    console.log("WhatsIncongito: Allowing read receipt to " + jid);
+                    console.log("WhatsIncongito: Allowing read receipt to " + jid + " (matched exception " + matchedException + ")");
 
                     // exceptions are one-time operation, so remove it from the list after some time
                     setTimeout(function() {
-                        exceptionsList = exceptionsList.filter(i => i !== jid);
+                        exceptionsList = exceptionsList.filter(function (i) {
+                            var iUser = i.split("@")[0].split(":")[0];
+                            return iUser !== jidUser;
+                        });
                     }, 2000);
 
                     return true;

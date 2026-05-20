@@ -217,9 +217,23 @@ document.addEventListener('sendReadConfirmation', async function (e)
     var chat = await getChatByJID(data.jid);
     var chatContainer = {chat: chat};
 
-    // add an exception and remove it after a short time at any case
-    exceptionsList.push(normalizeJID(data.jid));
-    setTimeout(function() { exceptionsList = exceptionsList.filter(i => i !== data.jid); }, 2000);
+    // Push every known JID form of the chat onto the exceptions list. With the LID migration
+    // WhatsApp may emit the outgoing `receipt` node with either the LID JID (`<n>@lid`) or
+    // the legacy `@s.whatsapp.net` JID, depending on the chat. We don't want our own outbound
+    // interceptor to silently re-block our own manually-sent receipt because the JID form
+    // it sees doesn't string-equal what we pushed.
+    var jidsToAllow = new Set();
+    jidsToAllow.add(normalizeJID(data.jid));
+    if (chat)
+    {
+        if (chat.id) jidsToAllow.add(normalizeJID(chat.id.toString()));
+        if (chat.accountLid) jidsToAllow.add(normalizeJID(chat.accountLid.toString()));
+    }
+    jidsToAllow.forEach(function (j) { exceptionsList.push(j); });
+    console.log("WAIncognito: granting receipt-send exceptions for", Array.from(jidsToAllow));
+    setTimeout(function() {
+        exceptionsList = exceptionsList.filter(function (i) { return !jidsToAllow.has(i); });
+    }, 5000);
     
     WhatsAppAPI.Seen.sendSeen(chatContainer).then(result =>
     {
