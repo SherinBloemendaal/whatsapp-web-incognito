@@ -36,6 +36,62 @@ var UIAnchors = (function ()
         return document.querySelector('#main, [data-tab="8"], [data-testid="conversation-panel-wrapper"]');
     }
 
+    /**
+     * Find the right-hand pane container — i.e. where `#main` mounts when a chat is open
+     * and where the WhatsApp intro/welcome screen is shown when no chat is selected.
+     *
+     * Returns the *container* that always exists (so we can append a card to it whether
+     * or not a chat is open).
+     */
+    function findRightPaneContainer()
+    {
+        // 1. If a chat is open, walk up from #main to its parent (the right-pane container).
+        var main = document.querySelector("#main");
+        if (main && main.parentElement) return main.parentElement;
+
+        // 2. Look for known intro-image markers across WhatsApp Web versions.
+        var introMarker = document.querySelector(
+            "[data-asset-intro-image], [data-asset-intro-image-light], [data-asset-intro-image-dark]"
+        );
+        if (introMarker)
+        {
+            var node = introMarker;
+            for (var i = 0; i < 6 && node && node.parentElement; i++)
+            {
+                if (node.parentElement.querySelector("[data-testid=\"chatlist-header\"]")) break;
+                node = node.parentElement;
+            }
+            return node;
+        }
+
+        // 3. Structural fallback: the chats-pane is the next-sibling of the right pane.
+        var chatlistHeader = findChatlistHeader();
+        if (chatlistHeader)
+        {
+            var pane = chatlistHeader;
+            for (var i = 0; i < 8 && pane && pane.parentElement; i++)
+            {
+                pane = pane.parentElement;
+                if (pane.nextElementSibling)
+                {
+                    var sib = pane.nextElementSibling;
+                    if (sib.tagName === "DIV" && sib.querySelector("svg, img, [data-icon]"))
+                        return sib;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * True if no chat is currently open (i.e. the intro/welcome screen is visible).
+     */
+    function isIntroPaneVisible()
+    {
+        return !document.querySelector("#main");
+    }
+
     function findInnerChatPanel()
     {
         var panel = findChatPanel();
@@ -200,6 +256,8 @@ var UIAnchors = (function ()
         findNavbarTabByLabel: findNavbarTabByLabel,
         findChatPanel: findChatPanel,
         findInnerChatPanel: findInnerChatPanel,
+        findRightPaneContainer: findRightPaneContainer,
+        isIntroPaneVisible: isIntroPaneVisible,
         findChatRows: findChatRows,
         findUnreadCounterIn: findUnreadCounterIn,
         findOpenDropdown: findOpenDropdown,

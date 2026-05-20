@@ -41,8 +41,17 @@ function initialize()
     mutationObserver.observe(appElem, { childList: true, subtree: true });
 }
 
+var __waiIntroCardDebounce = null;
+function scheduleIntroPaneCardUpdate()
+{
+    if (__waiIntroCardDebounce) clearTimeout(__waiIntroCardDebounce);
+    __waiIntroCardDebounce = setTimeout(function () { __waiIntroCardDebounce = null; updateIntroPaneCard(); }, 200);
+}
+
 function onMutationsObserved(mutations)
 {
+    scheduleIntroPaneCardUpdate();
+
     var found = false;
     for (var i = 0; i < mutations.length; i++)
     {
@@ -123,6 +132,111 @@ function onMainUIReady()
     // if the menu item is gone somehow after a short period of time (e.g because the layout changes from right-to-left) add it again
     // TODO: a race can make the icon added twice
     setTimeout(addIconIfNeeded, 1000);
+
+    setTimeout(updateIntroPaneCard, 1500);
+}
+
+// ---------------------------------------------------------------------------
+// Intro-pane status card
+// ---------------------------------------------------------------------------
+// When no chat is open, the right pane shows the WhatsApp welcome / intro screen.
+// We append a small WAIncognito status card there so the user can:
+//   - see at a glance which privacy features are active
+//   - open the full options dropdown without hunting for the navbar icon
+// The card auto-hides as soon as a chat is opened (#main appears).
+
+var __waiIntroCardOptions = null;
+
+document.addEventListener("onOptionsUpdate", function (e)
+{
+    try { __waiIntroCardOptions = JSON.parse(e.detail); } catch (err) { /* partial update; ignore */ }
+    updateIntroPaneCard();
+});
+
+function updateIntroPaneCard()
+{
+    var container = UIAnchors.findRightPaneContainer();
+    var existing = document.getElementById("wai-intro-card");
+
+    if (!UIAnchors.isIntroPaneVisible() || !container)
+    {
+        if (existing) existing.remove();
+        return;
+    }
+
+    if (!existing)
+    {
+        // Ensure absolute positioning has a positioned ancestor.
+        var prevPos = getComputedStyle(container).position;
+        if (prevPos === "static") container.style.position = "relative";
+        existing = buildIntroPaneCard();
+        container.appendChild(existing);
+    }
+    refreshIntroPaneCardStatus(existing);
+}
+
+function buildIntroPaneCard()
+{
+    var card = document.createElement("div");
+    card.id = "wai-intro-card";
+    card.className = "wai-intro-card";
+    card.innerHTML = `
+        <div class="wai-intro-card-inner">
+            <div class="wai-intro-card-header">
+                <div class="wai-intro-card-badge">WAIncognito</div>
+                <div class="wai-intro-card-title">Privacy active</div>
+                <div class="wai-intro-card-subtitle">No chat is open. Below is the current state of your privacy hooks.</div>
+            </div>
+
+            <ul class="wai-intro-card-list">
+                <li data-feature="readConfirmationsHook">
+                    <span class="wai-feature-name">Read receipts</span>
+                    <span class="wai-feature-state" data-state="off">Off</span>
+                </li>
+                <li data-feature="onlineUpdatesHook">
+                    <span class="wai-feature-name">"Online" status</span>
+                    <span class="wai-feature-state" data-state="off">Off</span>
+                </li>
+                <li data-feature="typingUpdatesHook">
+                    <span class="wai-feature-name">"Typing\u2026" status</span>
+                    <span class="wai-feature-state" data-state="off">Off</span>
+                </li>
+                <li data-feature="saveDeletedMsgsHook">
+                    <span class="wai-feature-name">Restore deleted messages</span>
+                    <span class="wai-feature-state" data-state="off">Off</span>
+                </li>
+            </ul>
+
+            <button class="wai-intro-card-button" type="button">Open Incognito options</button>
+        </div>
+    `;
+
+    card.querySelector(".wai-intro-card-button").addEventListener("click", function (e)
+    {
+        e.preventDefault();
+        var tab = document.querySelector(".menu-item-incognito button, .menu-item-incognito");
+        if (tab) tab.click();
+    });
+
+    return card;
+}
+
+function refreshIntroPaneCardStatus(card)
+{
+    var opts = __waiIntroCardOptions || {};
+    var entries = card.querySelectorAll("[data-feature]");
+    for (var i = 0; i < entries.length; i++)
+    {
+        var entry = entries[i];
+        var key = entry.getAttribute("data-feature");
+        var on = !!opts[key];
+        var stateEl = entry.querySelector(".wai-feature-state");
+        if (stateEl)
+        {
+            stateEl.setAttribute("data-state", on ? "on" : "off");
+            stateEl.textContent = on ? "Hidden" : "Off";
+        }
+    }
 }
 
 async function addIconIfNeeded()
