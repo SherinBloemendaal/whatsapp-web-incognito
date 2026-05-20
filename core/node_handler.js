@@ -73,18 +73,30 @@ NodeHandler.isSentNodeAllowed = function (node)
                     }
                 }
 
-                if (matchedException)
+                // Group bypass: when the user just clicked "Mark as read" on a group chat,
+                // WhatsApp emits per-participant receipts addressed to each individual unread
+                // sender (NOT the group JID). The user-portion match above won't help because
+                // those participant JIDs are completely unrelated to the group JID's number.
+                // So during a brief 5-second window after a group mark-as-read we let any
+                // outgoing read receipt through.
+                var inGroupBypass = typeof window !== "undefined"
+                    && window.__waiGroupReceiptBypassUntil
+                    && Date.now() < window.__waiGroupReceiptBypassUntil;
+
+                if (matchedException || inGroupBypass)
                 {
                     // this is the user trying to send out a read receipt.
-                    console.log("WhatsIncongito: Allowing read receipt to " + jid + " (matched exception " + matchedException + ")");
+                    console.log("WhatsIncongito: Allowing read receipt to " + jid +
+                                (matchedException ? " (matched exception " + matchedException + ")" : " (group bypass active)"));
 
-                    // exceptions are one-time operation, so remove it from the list after some time
-                    setTimeout(function() {
-                        exceptionsList = exceptionsList.filter(function (i) {
-                            var iUser = i.split("@")[0].split(":")[0];
-                            return iUser !== jidUser;
-                        });
-                    }, 2000);
+                    if (matchedException) {
+                        setTimeout(function() {
+                            exceptionsList = exceptionsList.filter(function (i) {
+                                var iUser = i.split("@")[0].split(":")[0];
+                                return iUser !== jidUser;
+                            });
+                        }, 2000);
+                    }
 
                     return true;
                 }

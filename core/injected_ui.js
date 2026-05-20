@@ -224,30 +224,67 @@ document.addEventListener('sendReadConfirmation', async function (e)
     // it sees doesn't string-equal what we pushed.
     var jidsToAllow = new Set();
     jidsToAllow.add(normalizeJID(data.jid));
+    var isGroup = false;
     if (chat)
     {
         if (chat.id) jidsToAllow.add(normalizeJID(chat.id.toString()));
         if (chat.accountLid) jidsToAllow.add(normalizeJID(chat.accountLid.toString()));
+        isGroup = !!chat.isGroup || (typeof data.jid === "string" && data.jid.indexOf("@g.us") !== -1);
+
+        // For group chats, WhatsApp emits per-participant receipts addressed to each individual
+        // sender of unread messages, not to the group JID. So we also need to permit any
+        // outgoing read receipt going to any participant of the group while the bypass window
+        // is open. We can't easily enumerate participants here without more API surface, so
+        // the matching code in `node_handler.js` falls back to a participant-prefix match when
+        // the chat is a group (see `groupBypass` window below).
     }
     jidsToAllow.forEach(function (j) { exceptionsList.push(j); });
-    console.log("WAIncognito: granting receipt-send exceptions for", Array.from(jidsToAllow));
+    console.log("WAIncognito: granting receipt-send exceptions for", Array.from(jidsToAllow), "isGroup=", isGroup);
+
+    // Open a *time-windowed* group bypass: while it's active, the outbound interceptor allows
+    // read receipts to ANY recipient. The window is short (5s) and closes automatically.
+    if (isGroup) {
+        window.__waiGroupReceiptBypassUntil = Date.now() + 5000;
+        console.log("WAIncognito: opening 5s group receipt bypass window");
+    }
+
     setTimeout(function() {
         exceptionsList = exceptionsList.filter(function (i) { return !jidsToAllow.has(i); });
     }, 5000);
-    
-    WhatsAppAPI.Seen.sendSeen(chatContainer).then(result =>
-    {
-        // TODO: remove the old blinking chats code
-        if (data.jid in blinkingChats)
-        {
-            clearInterval(blinkingChats[data.jid]["timerID"]);
-            delete blinkingChats[data.jid];
-        }
-        if (data.jid in blockedChats)
-        {
-            delete blockedChats[data.jid];
-        }
-    });
+
+    // Diagnostic: dump the chat object's relevant fields so we can verify the call to
+    // `Seen.sendSeen` has everything it needs.
+    try {
+        console.log("WAIncognito: sendReadConfirmation chat snapshot:", {
+            jid: data.jid,
+            chatExists: !!chat,
+            chatId: chat && chat.id && chat.id.toString && chat.id.toString(),
+            accountLid: chat && chat.accountLid && chat.accountLid.toString && chat.accountLid.toString(),
+            unreadCount: chat && chat.unreadCount,
+            isGroup: chat && chat.isGroup,
+            hasLastReceivedKey: !!(chat && chat.lastReceivedKey),
+            seenModuleKeys: WhatsAppAPI && WhatsAppAPI.Seen ? Object.keys(WhatsAppAPI.Seen) : null,
+        });
+    } catch (e) { console.warn("WAIncognito: snapshot failed:", e); }
+
+    var sendSeenResult;
+    try { sendSeenResult = WhatsAppAPI.Seen.sendSeen(chatContainer); }
+    catch (e) { console.error("WAIncognito: Seen.sendSeen threw:", e); sendSeenResult = null; }
+
+    if (sendSeenResult && typeof sendSeenResult.then === "function") {
+        sendSeenResult.then(function (result) {
+            console.log("WAIncognito: Seen.sendSeen resolved:", result);
+            if (data.jid in blinkingChats) {
+                clearInterval(blinkingChats[data.jid]["timerID"]);
+                delete blinkingChats[data.jid];
+            }
+            if (data.jid in blockedChats) delete blockedChats[data.jid];
+        }).catch(function (err) {
+            console.error("WAIncognito: Seen.sendSeen rejected:", err);
+        });
+    } else {
+        console.warn("WAIncognito: Seen.sendSeen returned non-promise:", sendSeenResult);
+    }
 
     chat.unreadCount -= data.unreadCount;
 

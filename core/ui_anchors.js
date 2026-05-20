@@ -42,43 +42,57 @@ var UIAnchors = (function ()
      *
      * Returns the *container* that always exists (so we can append a card to it whether
      * or not a chat is open).
+     *
+     * Strategy:
+     *   1. If `#main` exists, its parent is the right-pane wrapper.
+     *   2. Otherwise, walk up from `[data-testid="chatlist-header"]` and at each level look
+     *      at the siblings of the current node. The chats-list pane and the right pane are
+     *      siblings inside the same flex container. Any sibling that is "substantial"
+     *      (>= 300x300 in current viewport) and is *not* the chats-list pane itself is the
+     *      right pane.
+     *   3. Last-resort intro-image markers, kept for older WA Web versions.
      */
     function findRightPaneContainer()
     {
-        // 1. If a chat is open, walk up from #main to its parent (the right-pane container).
         var main = document.querySelector("#main");
         if (main && main.parentElement) return main.parentElement;
 
-        // 2. Look for known intro-image markers across WhatsApp Web versions.
+        var chatlistHeader = findChatlistHeader();
+        if (chatlistHeader)
+        {
+            var node = chatlistHeader;
+            var minWidth = 280;
+            var minHeight = 280;
+            for (var depth = 0; depth < 12 && node && node.parentElement; depth++)
+            {
+                var siblings = node.parentElement.children;
+                for (var i = 0; i < siblings.length; i++)
+                {
+                    var sib = siblings[i];
+                    if (sib === node) continue;
+                    if (sib.offsetWidth >= minWidth && sib.offsetHeight >= minHeight)
+                    {
+                        // Make sure we didn't accidentally pick up an overlay (e.g. modal).
+                        if (sib.querySelector("[data-testid=\"chatlist-header\"]")) continue;
+                        return sib;
+                    }
+                }
+                node = node.parentElement;
+            }
+        }
+
         var introMarker = document.querySelector(
             "[data-asset-intro-image], [data-asset-intro-image-light], [data-asset-intro-image-dark]"
         );
         if (introMarker)
         {
-            var node = introMarker;
-            for (var i = 0; i < 6 && node && node.parentElement; i++)
+            var n = introMarker;
+            for (var k = 0; k < 6 && n && n.parentElement; k++)
             {
-                if (node.parentElement.querySelector("[data-testid=\"chatlist-header\"]")) break;
-                node = node.parentElement;
+                if (n.parentElement.querySelector("[data-testid=\"chatlist-header\"]")) break;
+                n = n.parentElement;
             }
-            return node;
-        }
-
-        // 3. Structural fallback: the chats-pane is the next-sibling of the right pane.
-        var chatlistHeader = findChatlistHeader();
-        if (chatlistHeader)
-        {
-            var pane = chatlistHeader;
-            for (var i = 0; i < 8 && pane && pane.parentElement; i++)
-            {
-                pane = pane.parentElement;
-                if (pane.nextElementSibling)
-                {
-                    var sib = pane.nextElementSibling;
-                    if (sib.tagName === "DIV" && sib.querySelector("svg, img, [data-icon]"))
-                        return sib;
-                }
-            }
+            return n;
         }
 
         return null;
