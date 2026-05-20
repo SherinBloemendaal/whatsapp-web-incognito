@@ -189,7 +189,7 @@ document.addEventListener('onDropdownOpened', function (e)
     {
         var name = props.chat.name;
         var formattedName = props.chat.contact.name;
-        var jid = getJidOfChat(chat);
+        var jid = getJidOfChat(props.chat);
         var lastMessageIndex = props.chat.lastReceivedKey.id;
         var unreadCount = props.chat.unreadCount;
         var isGroup = props.chat.isGroup;
