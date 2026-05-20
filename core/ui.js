@@ -66,7 +66,7 @@ function onMutationsObserved(mutations)
                 found = true;
                 break;
             }
-            else if (addedNode.nodeName.toLowerCase() == "div" && addedNode.classList.contains(UIClassNames.OUTER_DROPDOWN_CLASS))
+            else if (UIAnchors.isNewlyAddedDropdown(addedNode))
             {
                 // dropdown was opened
                 setTimeout(function ()
@@ -129,7 +129,35 @@ async function addIconIfNeeded()
 {
     if (document.getElementsByClassName("menu-item-incognito").length > 0) return; // already added
     updateUIClassNamesIfNeeded();
+    UIAnchors.syncLegacyClassNames();
 
+    // Try the new structural anchor (post-redesign WhatsApp Web). If we can find a navbar tab,
+    // clone it so we inherit the current visual styling automatically.
+    var template = UIAnchors.findNavbarTabByLabel("Status")
+        || UIAnchors.findNavbarTabByLabel("Channels")
+        || UIAnchors.findNavbarTabByLabel("Communities")
+        || UIAnchors.findNavbarTabs()[0];
+
+    if (template)
+    {
+        var iconUrl = chrome.runtime.getURL("images/incognito_gray_24_hollow_9.svg");
+        var menuItemElem = await UIAnchors.cloneTabAsIncognitoIcon(iconUrl, "Incognito Options");
+        if (!menuItemElem) return;
+
+        // Insert the cloned tab into the same container as the template tab, before the template.
+        // Walk up from the inner button to the per-tab outer wrapper so siblings are tabs.
+        var perTabWrapper = template.closest("div > span")?.parentElement
+            || template.parentElement?.parentElement?.parentElement;
+        if (perTabWrapper && perTabWrapper.parentElement)
+            perTabWrapper.parentElement.insertBefore(menuItemElem, perTabWrapper);
+        else
+            return;
+
+        attachIncognitoMenuListeners(menuItemElem);
+        return;
+    }
+
+    // Fallback: legacy WhatsApp Web (pre-redesign) — anchor by hardcoded class hash.
     var firstMenuItem = document.getElementsByClassName(UIClassNames.MENU_ITEM_CLASS)[0];
     if (firstMenuItem != undefined)
     {
@@ -137,80 +165,7 @@ async function addIconIfNeeded()
         menuItemElem.setAttribute("class", UIClassNames.MENU_ITEM_CLASS + " menu-item-incognito");
 
         firstMenuItem.parentElement.insertBefore(menuItemElem, firstMenuItem);
-
-        browser.runtime.sendMessage({ name: "getOptions" }, function (options)
-        {
-            document.dispatchEvent(new CustomEvent('onOptionsUpdate', { detail: JSON.stringify(options) }));
-
-            var dropContent = generateDropContent(options);
-            var drop = new Drop(
-            {
-                target: menuItemElem,
-                content: dropContent,
-                position: "bottom left",
-                classes: "drop-theme-incognito",
-                openOn: "click",
-                tetherOptions:
-                {
-                    offset: "-4px -4px 0 0"
-                },
-            });
-            var originalCloseFunction = drop.close;
-            drop.close = function ()
-            {
-                document.dispatchEvent(new CustomEvent('onIncognitoOptionsClosed', { detail: null }));
-                setTimeout(function () { originalCloseFunction.apply(drop, arguments); }, 100);
-            }
-            drop.on("open", function ()
-            {
-                if (!checkInterception()) return;
-                var pressedMenuItemClass = UIClassNames.MENU_ITEM_CLASS + " " + UIClassNames.MENU_ITEM_HIGHLIGHTED_CLASS + " active menu-item-incognito";
-                document.getElementsByClassName("menu-item-incognito")[0].setAttribute("class", pressedMenuItemClass);
-
-                document.getElementById("incognito-option-read-confirmations").addEventListener("click", onReadConfirmaionsTick);
-                document.getElementById("incognito-option-online-status").addEventListener("click", onOnlineUpdatesTick);
-                document.getElementById("incognito-option-typing-status").addEventListener("click", onTypingUpdatesTick);
-                document.getElementById("incognito-option-save-deleted-msgs").addEventListener("click", onSaveDeletedMsgsTick);
-                document.getElementById("incognito-option-show-device-type").addEventListener("click", onShowDeviceTypesTick);
-                document.getElementById("incognito-option-auto-receipt").addEventListener("click", onAutoReceiptsTick);
-                document.getElementById("incognito-option-status-downloading").addEventListener("click", onStatusDownloadingTick);
-                for (var nextButton of document.getElementsByClassName('incognito-next-button'))
-                {
-                    nextButton.addEventListener("click", onNextButtonClicked);
-                };
-                for (var nextButton of document.getElementsByClassName('incognito-back-button'))
-                {
-                    nextButton.addEventListener("click", onBackButtonClicked);
-                };
-                
-                //document.getElementById("incognito-option-safety-delay").addEventListener("input", onSafetyDelayChanged);
-                //document.getElementById("incognito-option-safety-delay").addEventListener("keypress", isNumberKey);
-                //document.getElementById("incognito-radio-enable-safety-delay").addEventListener("click", onSafetyDelayEnabled);
-                //document.getElementById("incognito-radio-disable-safety-delay").addEventListener("click", onSafetyDelayDisabled);
-
-                document.dispatchEvent(new CustomEvent('onIncognitoOptionsOpened', { detail: null }));
-            });
-            drop.on("close", function ()
-            {
-                document.getElementsByClassName("menu-item-incognito")[0].setAttribute("class", UIClassNames.MENU_ITEM_CLASS + " menu-item-incognito");
-
-                document.getElementById("incognito-option-read-confirmations").removeEventListener("click", onReadConfirmaionsTick);
-                document.getElementById("incognito-option-online-status").removeEventListener("click", onOnlineUpdatesTick);
-                document.getElementById("incognito-option-typing-status").removeEventListener("click", onTypingUpdatesTick);
-
-                for (var nextButton of document.getElementsByClassName('incognito-next-button'))
-                {
-                    nextButton.removeEventListener("click", onNextButtonClicked);
-                };
-                for (var nextButton of document.getElementsByClassName('incognito-back-button'))
-                {
-                    nextButton.removeEventListener("click", onBackButtonClicked);
-                };
-
-                //document.getElementById("incognito-radio-enable-safety-delay").removeEventListener("click", onSafetyDelayEnabled);
-                //document.getElementById("incognito-radio-disable-safety-delay").removeEventListener("click", onSafetyDelayDisabled);
-            });
-        });
+        attachIncognitoMenuListeners(menuItemElem);
     }
     else if (isUIClassesWorking)
     {
@@ -225,6 +180,96 @@ async function addIconIfNeeded()
             confirmButtonText: "Got it",
         });
     }
+}
+
+function attachIncognitoMenuListeners(menuItemElem)
+{
+    browser.runtime.sendMessage({ name: "getOptions" }, function (options)
+    {
+        document.dispatchEvent(new CustomEvent('onOptionsUpdate', { detail: JSON.stringify(options) }));
+
+        var dropContent = generateDropContent(options);
+        var drop = new Drop(
+        {
+            target: menuItemElem,
+            content: dropContent,
+            position: "bottom left",
+            classes: "drop-theme-incognito",
+            openOn: "click",
+            tetherOptions:
+            {
+                offset: "-4px -4px 0 0"
+            },
+        });
+        var originalCloseFunction = drop.close;
+        drop.close = function ()
+        {
+            document.dispatchEvent(new CustomEvent('onIncognitoOptionsClosed', { detail: null }));
+            setTimeout(function () { originalCloseFunction.apply(drop, arguments); }, 100);
+        }
+        drop.on("open", function ()
+        {
+            if (!checkInterception()) return;
+            var existing = document.getElementsByClassName("menu-item-incognito")[0];
+            if (existing)
+            {
+                var btn = existing.querySelector('button');
+                if (btn) btn.setAttribute("aria-pressed", "true");
+                if (btn) btn.setAttribute("data-navbar-item-selected", "true");
+                // legacy theming: only meaningful on pre-redesign WA Web
+                if (UIClassNames.MENU_ITEM_CLASS && existing.className.indexOf(UIClassNames.MENU_ITEM_CLASS) === 0)
+                {
+                    var pressedMenuItemClass = UIClassNames.MENU_ITEM_CLASS + " " + UIClassNames.MENU_ITEM_HIGHLIGHTED_CLASS + " active menu-item-incognito";
+                    existing.setAttribute("class", pressedMenuItemClass);
+                }
+            }
+
+            document.getElementById("incognito-option-read-confirmations").addEventListener("click", onReadConfirmaionsTick);
+            document.getElementById("incognito-option-online-status").addEventListener("click", onOnlineUpdatesTick);
+            document.getElementById("incognito-option-typing-status").addEventListener("click", onTypingUpdatesTick);
+            document.getElementById("incognito-option-save-deleted-msgs").addEventListener("click", onSaveDeletedMsgsTick);
+            document.getElementById("incognito-option-show-device-type").addEventListener("click", onShowDeviceTypesTick);
+            document.getElementById("incognito-option-auto-receipt").addEventListener("click", onAutoReceiptsTick);
+            document.getElementById("incognito-option-status-downloading").addEventListener("click", onStatusDownloadingTick);
+            for (var nextButton of document.getElementsByClassName('incognito-next-button'))
+            {
+                nextButton.addEventListener("click", onNextButtonClicked);
+            };
+            for (var nextButton of document.getElementsByClassName('incognito-back-button'))
+            {
+                nextButton.addEventListener("click", onBackButtonClicked);
+            };
+
+            document.dispatchEvent(new CustomEvent('onIncognitoOptionsOpened', { detail: null }));
+        });
+        drop.on("close", function ()
+        {
+            var existing = document.getElementsByClassName("menu-item-incognito")[0];
+            if (existing)
+            {
+                var btn = existing.querySelector('button');
+                if (btn) btn.setAttribute("aria-pressed", "false");
+                if (btn) btn.setAttribute("data-navbar-item-selected", "false");
+                if (UIClassNames.MENU_ITEM_CLASS && existing.className.indexOf(UIClassNames.MENU_ITEM_CLASS) === 0)
+                {
+                    existing.setAttribute("class", UIClassNames.MENU_ITEM_CLASS + " menu-item-incognito");
+                }
+            }
+
+            document.getElementById("incognito-option-read-confirmations").removeEventListener("click", onReadConfirmaionsTick);
+            document.getElementById("incognito-option-online-status").removeEventListener("click", onOnlineUpdatesTick);
+            document.getElementById("incognito-option-typing-status").removeEventListener("click", onTypingUpdatesTick);
+
+            for (var nextButton of document.getElementsByClassName('incognito-next-button'))
+            {
+                nextButton.removeEventListener("click", onNextButtonClicked);
+            };
+            for (var nextButton of document.getElementsByClassName('incognito-back-button'))
+            {
+                nextButton.removeEventListener("click", onBackButtonClicked);
+            };
+        });
+    });
 }
 
 function generateDropContent(options)
